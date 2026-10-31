@@ -1,184 +1,408 @@
+
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+import json
+import re
+import time
 from io import BytesIO
+from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="ATLAS | Research Command", page_icon="🧠", layout="wide")
+st.set_page_config(
+    page_title="ATLAS Research Engine",
+    page_icon="🌐",
+    layout="wide"
+)
 
 BUSINESSES = [
-    ("AI receptionist service", "Monthly subscription", "Local services, clinics, salons"),
-    ("Real estate lead automation", "Setup + monthly retainer", "Real estate agencies"),
-    ("Social media content agency", "Monthly packages", "SMEs and local brands"),
-    ("Resume and job assistance", "Per order / subscription", "Job seekers"),
-    ("AI customer support service", "Monthly subscription", "E-commerce and SMEs"),
-    ("Appointment booking automation", "Setup + monthly fee", "Clinics and service businesses"),
-    ("WhatsApp business automation", "Setup + monthly fee", "Retailers and service providers"),
-    ("E-commerce operations automation", "Monthly retainer", "Online sellers"),
-    ("Lead generation service", "Per qualified lead / retainer", "B2B and local businesses"),
-    ("AI website and landing-page service", "Project fee + maintenance", "Small businesses"),
-    ("Online courses and training", "Course sales", "Students and professionals"),
-    ("Digital products and templates", "Per-sale income", "Creators and small businesses"),
-    ("Automated reporting service", "Monthly subscription", "SMEs and agencies"),
-    ("Recruitment workflow automation", "Placement / subscription", "Recruiters and employers"),
-    ("Email marketing automation", "Monthly retainer", "SMEs and online stores"),
-    ("Bookkeeping workflow support", "Monthly subscription", "Small businesses"),
-    ("Online review management", "Monthly subscription", "Local businesses"),
-    ("Customer reminder automation", "Monthly subscription", "Clinics and appointment businesses"),
-    ("Market research service", "Project fee", "Startups and SMEs"),
-    ("AI workflow consulting", "Setup + maintenance", "SMEs across sectors"),
+    "AI receptionist service",
+    "Real estate lead automation",
+    "Social media content agency",
+    "Resume and job assistance",
+    "AI customer support service",
+    "Appointment booking automation",
+    "WhatsApp business automation",
+    "E-commerce operations automation",
+    "Lead generation service",
+    "AI website and landing-page service",
+    "Online courses and training",
+    "Digital products and templates",
+    "Automated reporting service",
+    "Recruitment workflow automation",
+    "Email marketing automation",
+    "Bookkeeping workflow support",
+    "Virtual assistant automation",
+    "Invoice processing automation",
+    "Local SEO and reputation management",
+    "Inventory management automation"
 ]
 
-if "missions" not in st.session_state:
-    st.session_state.missions = []
-if "candidates" not in st.session_state:
-    st.session_state.candidates = pd.DataFrame([
-        {"Business": n, "Revenue model": r, "Target customers": c,
-         "Demand evidence": "Not researched", "Competitor evidence": "Not researched",
-         "Startup cost (₹)": None, "Monthly revenue (₹)": None,
-         "Automation score / 10": None, "Evidence status": "Pending"}
-        for n, r, c in BUSINESSES
-    ])
+st.title("🌐 ATLAS — AI Business Research Engine")
+st.caption("Mission 001 | India | 20 Automated Business Opportunities")
 
-st.markdown("""
-<style>
-.block-container {padding-top: 1.4rem; padding-bottom: 2rem;}
-.atlas-sub {color:#8b95a5; font-size:0.92rem;}
-div[data-testid="stMetric"] {background:rgba(120,120,120,.07); padding:12px; border-radius:12px;}
-</style>
-""", unsafe_allow_html=True)
+st.sidebar.header("Research Configuration")
 
-st.title("🧠 PROJECT ATLAS")
-st.caption("Research Command Centre · Mission 001")
-st.markdown('<p class="atlas-sub">One mission interface for research planning, specialist work allocation and evidence-led business decisions.</p>', unsafe_allow_html=True)
+api_key = st.sidebar.text_input(
+    "Google Gemini API Key",
+    type="password",
+    help="Enter your Gemini API key. It is not saved in this repository."
+)
 
-with st.sidebar:
-    st.header("Mission settings")
-    region = st.selectbox("Primary market", ["India", "India + international comparison", "Global"])
-    currency = st.selectbox("Currency", ["INR (₹)", "USD ($)"])
-    depth = st.selectbox("Research depth", ["Standard", "Deep research", "Due-diligence level"], index=2)
-    st.divider()
-    st.caption("Build status")
-    st.success("Dashboard foundation ready")
-    st.warning("Live web research connector: not configured")
-    st.info("No API keys are stored in this starter version.")
+model_name = "gemini-2.5-flash"
 
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 Mission control", "🧩 Specialist teams", "📊 Business workspace", "📘 Setup guide"])
+if "results" not in st.session_state:
+    st.session_state.results = []
 
-with tab1:
-    st.subheader("Create a research mission")
-    with st.form("mission_form"):
-        mission_name = st.text_input("Mission name", "Mission 001 — 20 Automated Business Opportunities")
-        objective = st.text_area(
-            "What should ATLAS accomplish?",
-            "Research 20 businesses that can be automated in India. Compare demand, competitors, startup investment, operating costs, revenue potential, automation feasibility and risks. Rank the best opportunities and recommend the top three.",
-            height=125
+if "completed" not in st.session_state:
+    st.session_state.completed = False
+
+st.sidebar.metric("Businesses", len(BUSINESSES))
+st.sidebar.metric("Research completed", len(st.session_state.results))
+
+st.subheader("Mission 001 — India Business Opportunity Analysis")
+
+st.info(
+    "ATLAS will research each business using Gemini AI "
+    "and Google Search grounding. Results include market "
+    "demand, competitors, investment, costs, revenue and risks."
+)
+
+with st.expander("View all 20 research targets"):
+    for i, business in enumerate(BUSINESSES, 1):
+        st.write(f"{i}. {business}")
+
+def extract_json(text):
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?", "", text)
+    text = re.sub(r"```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start == -1 or end == 0:
+        raise ValueError("No valid JSON found")
+    return json.loads(text[start:end])
+
+def research_business(client, business):
+    prompt = f"""
+You are an experienced Indian market research analyst.
+
+Conduct current internet research on this business:
+{business}
+
+Market: India
+Currency: INR
+
+Research:
+1. Market demand and target customers.
+2. Competitors operating in India.
+3. Customer acquisition opportunities.
+4. Startup investment.
+5. Monthly operating expenses.
+6. Realistic monthly revenue after initial establishment.
+7. Estimated monthly operating profit.
+8. Automation feasibility.
+9. Major business risks.
+10. Practical first 90-day launch plan.
+
+Use current web information and Google Search.
+Distinguish verified facts from estimates.
+Do not invent market statistics.
+Use conservative financial estimates.
+Mention assumptions and cite source URLs.
+
+Return ONLY valid JSON in this structure:
+
+{{
+ "business": "{business}",
+ "market_demand": "Explanation",
+ "target_customers": "Explanation",
+ "competitors": "Names and comparison",
+ "startup_investment_inr": 0,
+ "monthly_operating_cost_inr": 0,
+ "monthly_revenue_inr": 0,
+ "monthly_profit_inr": 0,
+ "automation_score": 0,
+ "market_score": 0,
+ "competition_score": 0,
+ "risks": "Explanation",
+ "launch_plan": "First 90 days",
+ "sources": [
+   {{"title": "Source name", "url": "https://example.com"}}
+ ],
+ "assumptions": "Financial assumptions"
+}}
+
+Scores must be integers between 1 and 10.
+Financial figures must be numeric INR values.
+"""
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            tools=[
+                types.Tool(
+                    google_search=types.GoogleSearch()
+                )
+            ],
+            temperature=0.2
         )
-        deliverables = st.multiselect(
-            "Required deliverables",
-            ["20-business comparison", "Competitor analysis", "Investment model", "12-month projections",
-             "Automation architecture", "Customer acquisition plan", "Risk assessment", "Top-three recommendation"],
-            default=["20-business comparison", "Competitor analysis", "Investment model",
-                     "12-month projections", "Automation architecture", "Top-three recommendation"]
-        )
-        submitted = st.form_submit_button("＋ Create mission", type="primary", use_container_width=True)
-
-    if submitted:
-        if not objective.strip():
-            st.error("Please enter a mission objective.")
-        else:
-            item = {
-                "id": f"ATLAS-{len(st.session_state.missions)+1:03d}",
-                "name": mission_name.strip(),
-                "objective": objective.strip(),
-                "market": region,
-                "currency": currency,
-                "depth": depth,
-                "deliverables": deliverables,
-                "status": "Planned — awaiting research connector",
-                "created": datetime.now().strftime("%Y-%m-%d %H:%M")
-            }
-            st.session_state.missions.insert(0, item)
-            st.success(f"{item['id']} created. The dashboard has recorded the mission plan.")
-            st.info("This starter version creates and tracks the mission specification. It does not yet claim to have searched the live internet or completed the research.")
-
-    st.divider()
-    st.subheader("Mission queue")
-    if not st.session_state.missions:
-        st.info("No missions created in this session yet. Submit the form above to create Mission 001.")
-    else:
-        for m in st.session_state.missions:
-            with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                c1.markdown(f"**{m['id']} · {m['name']}**")
-                c2.warning(m["status"])
-                st.caption(f"Created {m['created']} · Market: {m['market']} · Depth: {m['depth']}")
-                st.write(m["objective"])
-                st.caption("Deliverables: " + ", ".join(m["deliverables"]))
-
-with tab2:
-    st.subheader("Specialist workforce")
-    st.write("The 100 roles are logical specialist roles. The first implementation groups them into 10 departments; they are not 100 independently running paid models.")
-    teams = [
-        ("Research & source discovery", "10 roles", "Find relevant sources, extract facts, compare evidence, record publication dates."),
-        ("Market & customer analysis", "10 roles", "Assess customer segments, demand signals, buying problems and willingness-to-pay evidence."),
-        ("Competitor intelligence", "10 roles", "Find providers, compare public offers, pricing and positioning."),
-        ("Business model design", "10 roles", "Define service packages, revenue models, delivery scope and recurring income."),
-        ("Financial modelling", "10 roles", "Estimate startup costs, monthly expenses, revenue scenarios, margins and break-even."),
-        ("Automation architecture", "10 roles", "Map tasks, tools, integrations, human handoffs and operating workflows."),
-        ("Sales & marketing", "10 roles", "Develop acquisition channels, offers, outreach plans and conversion assumptions."),
-        ("Risk & compliance", "10 roles", "Identify privacy, consumer, sector-specific, platform and operational risks."),
-        ("Quality assurance", "10 roles", "Cross-check sources, flag contradictions, test calculations and mark unsupported claims."),
-        ("Master orchestration", "10 roles", "Plan tasks, delegate work, track dependencies and assemble final reports."),
-    ]
-    for i in range(0, len(teams), 2):
-        cols = st.columns(2)
-        for col, team in zip(cols, teams[i:i+2]):
-            with col:
-                with st.container(border=True):
-                    st.markdown(f"**{team[0]}**")
-                    st.caption(team[1])
-                    st.write(team[2])
-
-with tab3:
-    st.subheader("20-business research workspace")
-    st.caption("Initial candidate register. Evidence and financial fields remain blank until research is run and verified.")
-    edited = st.data_editor(
-        st.session_state.candidates,
-        use_container_width=True,
-        hide_index=True,
-        disabled=["Business", "Revenue model", "Target customers"],
-        column_config={
-            "Startup cost (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "Monthly revenue (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "Automation score / 10": st.column_config.NumberColumn(min_value=0, max_value=10, step=1),
-        }
     )
-    st.session_state.candidates = edited
-    csv = edited.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("⬇ Download candidate register (CSV)", csv, "atlas_20_business_candidates.csv", "text/csv")
-    st.metric("Business candidates", len(edited))
-    st.warning("Do not treat blank financial fields or candidate names as verified market findings.")
 
-with tab4:
-    st.subheader("What is working now — and what comes next")
-    st.markdown("""
-**Working in this starter build**
-- Interactive mission creation and session queue.
-- Market, currency and research-depth settings.
-- Ten specialist department definitions.
-- Editable 20-business candidate register.
-- CSV export of the candidate register.
+    data = extract_json(response.text)
+    data["research_status"] = "Completed"
+    return data
 
-**Not connected yet**
-- Live web search and source extraction.
-- AI model / agent orchestration.
-- Persistent database across sessions.
-- Automated financial estimates and source verification.
-- PDF report generation and user login.
+def make_excel(data):
+    df = pd.DataFrame(data)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="Business Research"
+        )
+    return output.getvalue()
 
-**Next build step:** connect a web research provider and an AI model through protected API secrets. ATLAS will then gather source-backed evidence for each business, retain URLs and dates, and mark estimates separately from verified facts.
-""")
-    st.markdown("Deployment guide: [Streamlit Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud) · [Secrets management](https://docs.streamlit.io/deploy/concepts/secrets)")
+def make_csv(data):
+    return pd.DataFrame(data).to_csv(
+        index=False
+    ).encode("utf-8-sig")
 
 st.divider()
-st.caption("ATLAS starter build · Mission planning workspace · Research results are not generated until live research integrations are configured.")
+
+st.subheader("Research Execution")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric(
+        "Research completed",
+        len(st.session_state.results)
+    )
+
+with col2:
+    st.metric(
+        "Remaining",
+        len(BUSINESSES) - len(st.session_state.results)
+    )
+
+if st.button(
+    "🚀 START RESEARCH — ALL 20 BUSINESSES",
+    type="primary",
+    use_container_width=True
+):
+    if not api_key:
+        st.error("Please enter your Gemini API key in the sidebar.")
+    else:
+        try:
+            client = genai.Client(api_key=api_key)
+
+            completed_names = {
+                item["business"]
+                for item in st.session_state.results
+            }
+
+            remaining = [
+                b for b in BUSINESSES
+                if b not in completed_names
+            ]
+
+            progress = st.progress(0)
+            status = st.empty()
+
+            for index, business in enumerate(remaining):
+                status.info(
+                    f"Researching {business} "
+                    f"({index + 1}/{len(remaining)})"
+                )
+
+                try:
+                    result = research_business(
+                        client,
+                        business
+                    )
+
+                    st.session_state.results.append(result)
+
+                except Exception as error:
+                    st.warning(
+                        f"Research failed for {business}: {error}"
+                    )
+
+                progress.progress(
+                    (index + 1) / len(remaining)
+                )
+
+                time.sleep(1)
+
+            st.session_state.completed = True
+            status.success("Research execution finished.")
+            st.rerun()
+
+        except Exception as error:
+            st.error(f"API connection error: {error}")
+
+if st.session_state.results:
+
+    st.divider()
+    st.header("📊 Research Results")
+
+    df = pd.DataFrame(st.session_state.results)
+
+    if "monthly_profit_inr" in df.columns:
+        df["monthly_profit_inr"] = pd.to_numeric(
+            df["monthly_profit_inr"],
+            errors="coerce"
+        )
+
+    if "market_score" in df.columns:
+        df["market_score"] = pd.to_numeric(
+            df["market_score"],
+            errors="coerce"
+        )
+
+    if "automation_score" in df.columns:
+        df["automation_score"] = pd.to_numeric(
+            df["automation_score"],
+            errors="coerce"
+        )
+
+    if "monthly_profit_inr" in df.columns:
+        df = df.sort_values(
+            "monthly_profit_inr",
+            ascending=False
+        )
+
+    st.subheader("Business Comparison")
+
+    display_columns = [
+        "business",
+        "startup_investment_inr",
+        "monthly_operating_cost_inr",
+        "monthly_revenue_inr",
+        "monthly_profit_inr",
+        "automation_score",
+        "market_score"
+    ]
+
+    available = [
+        c for c in display_columns
+        if c in df.columns
+    ]
+
+    st.dataframe(
+        df[available],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.subheader("🏆 Top Three Opportunities")
+
+    for rank, (_, row) in enumerate(
+        df.head(3).iterrows(), 1
+    ):
+        st.markdown(
+            f"### {rank}. {row['business']}"
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric(
+            "Startup investment",
+            f"₹{row.get('startup_investment_inr', 0):,.0f}"
+        )
+
+        c2.metric(
+            "Monthly revenue",
+            f"₹{row.get('monthly_revenue_inr', 0):,.0f}"
+        )
+
+        c3.metric(
+            "Monthly profit",
+            f"₹{row.get('monthly_profit_inr', 0):,.0f}"
+        )
+
+        st.write(
+            "Market demand:",
+            row.get("market_demand", "Not available")
+        )
+
+        st.write(
+            "Risks:",
+            row.get("risks", "Not available")
+        )
+
+        st.divider()
+
+    st.subheader("Detailed Business Research")
+
+    for _, row in df.iterrows():
+        with st.expander(str(row["business"])):
+            for field in [
+                "market_demand",
+                "target_customers",
+                "competitors",
+                "risks",
+                "launch_plan",
+                "assumptions"
+            ]:
+                st.markdown(f"**{field.replace('_', ' ').title()}**")
+                st.write(row.get(field, "Not available"))
+
+            st.markdown("**Research Sources**")
+
+            sources = row.get("sources", [])
+
+            if isinstance(sources, list):
+                for source in sources:
+                    if isinstance(source, dict):
+                        url = source.get("url", "")
+                        title = source.get("title", url)
+                        if url.startswith("https://"):
+                            st.markdown(f"- [{title}]({url})")
+
+    st.divider()
+    st.subheader("📥 Download Research Reports")
+
+    d1, d2 = st.columns(2)
+
+    with d1:
+        st.download_button(
+            "Download Excel Report",
+            data=make_excel(df.to_dict("records")),
+            file_name="ATLAS_Mission_001.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    with d2:
+        st.download_button(
+            "Download CSV Report",
+            data=make_csv(df.to_dict("records")),
+            file_name="ATLAS_Mission_001.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    if len(st.session_state.results) < 20:
+        st.warning(
+            f"{20 - len(st.session_state.results)} "
+            "businesses remain to be researched. "
+            "Press Start Research again to continue."
+        )
+    else:
+        st.success(
+            "All 20 business research records have been generated."
+        )
+
+else:
+    st.info(
+        "No research results yet. Enter your API key "
+        "and start the research engine."
+    )
+
+st.divider()
+st.caption(
+    "ATLAS Research Engine | Mission 001 | "
+    "AI-generated estimates require independent validation."
+)
