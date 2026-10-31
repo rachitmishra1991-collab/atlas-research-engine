@@ -48,7 +48,7 @@ api_key = st.sidebar.text_input(
     help="Enter your Gemini API key. It is not saved in this repository."
 )
 
-model_name = "gemini-2.5-flash"
+model_name = "gemini-3.8-flash"
 
 if "results" not in st.session_state:
     st.session_state.results = []
